@@ -1,513 +1,451 @@
-#Requires -Version 5.1
-# setup.ps1 -- Intelligent submodule-aware repo setup
+#!/usr/bin/env bash
+# setup.sh — Intelligent submodule-aware repo setup
 # Reads all submodules from .gitmodules; no hardcoded repo names.
-Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+set -euo pipefail
 
-# ---------------------------------------------
+# ─────────────────────────────────────────────
 #  Logging
-# ---------------------------------------------
-function Write-Banner {
-    Clear-Host
-    Write-Host ""
-    Write-Host "  +----------------------------------------------+" -ForegroundColor DarkCyan
-    Write-Host "  |      Repo Setup  --  Submodule-Aware         |" -ForegroundColor DarkCyan
-    Write-Host "  +----------------------------------------------+" -ForegroundColor DarkCyan
-    Write-Host ""
+# ─────────────────────────────────────────────
+_c_reset="\033[0m"
+_c_cyan="\033[1;36m"
+_c_green="\033[1;32m"
+_c_red="\033[1;31m"
+_c_gray="\033[0;37m"
+_c_yellow="\033[1;33m"
+_c_white="\033[1;37m"
+_c_dim="\033[2m"
+
+banner() {
+    clear
+    echo -e "${_c_cyan}"
+    echo "  ╔══════════════════════════════════════════════╗"
+    echo "  ║         Repo Setup  —  Submodule-Aware       ║"
+    echo "  ╚══════════════════════════════════════════════╝"
+    echo -e "${_c_reset}"
 }
 
-function Write-Section {
-    param([string]$Title)
-    Write-Host ""
-    $pad = "-" * [Math]::Max(2, 40 - $Title.Length)
-    Write-Host "  -- $Title $pad" -ForegroundColor DarkCyan
-}
+section()  { echo -e "\n${_c_cyan}  ── $* ${_c_dim}$(printf '%.0s─' {1..30})${_c_reset}"; }
+info()     { echo -e "  ${_c_cyan}→${_c_reset}  ${_c_gray}$*${_c_reset}"; }
+success()  { echo -e "  ${_c_green}✔${_c_reset}  ${_c_white}$*${_c_reset}"; }
+fail()     { echo -e "\n  ${_c_red}✖  $*${_c_reset}\n" >&2; }
+die()      { fail "$*"; exit 1; }
+skipped()  { echo -e "  ${_c_yellow}↷${_c_reset}  ${_c_dim}$* (skipped — already done)${_c_reset}"; }
 
-function Write-Info {
-    param([string]$Msg)
-    Write-Host "  " -NoNewline
-    Write-Host "->  " -ForegroundColor DarkCyan -NoNewline
-    Write-Host $Msg -ForegroundColor Gray
-}
+summary_row() { echo -e "    ${_c_cyan}$1${_c_reset}  ${_c_gray}$2${_c_reset}"; }
 
-function Write-Ok {
-    param([string]$Msg)
-    Write-Host "  " -NoNewline
-    Write-Host "[OK]  " -ForegroundColor Green -NoNewline
-    Write-Host $Msg -ForegroundColor White
-}
-
-function Write-Skip {
-    param([string]$Msg)
-    Write-Host "  " -NoNewline
-    Write-Host "[--]  " -ForegroundColor Yellow -NoNewline
-    Write-Host "$Msg (skipped -- already done)" -ForegroundColor DarkGray
-}
-
-function Write-Fail {
-    param([string]$Msg)
-    Write-Host ""
-    Write-Host "  [!!]  $Msg" -ForegroundColor Red
-    Write-Host ""
-}
-
-function Invoke-Die {
-    param([string]$Msg)
-    Write-Fail $Msg
-    exit 1
-}
-
-function Write-SummaryRow {
-    param([string]$Label, [string]$Value)
-    Write-Host "    " -NoNewline
-    Write-Host $Label -ForegroundColor Cyan -NoNewline
-    Write-Host "  $Value" -ForegroundColor Gray
-}
-
-function Write-CompletionBox {
-    param([string]$Title)
-    Write-Host ""
-    Write-Host "  +----------------------------------------------+" -ForegroundColor Green
-    Write-Host "  |  $($Title.PadRight(44))|" -ForegroundColor Green
-    Write-Host "  +----------------------------------------------+" -ForegroundColor Green
-    Write-Host ""
-}
-
-# ---------------------------------------------
+# ─────────────────────────────────────────────
 #  Prerequisites
-# ---------------------------------------------
-function Require-Command {
-    param([string]$Cmd)
-    if (-not (Get-Command $Cmd -ErrorAction SilentlyContinue)) {
-        Invoke-Die "'$Cmd' is not installed or not in PATH. Install it and retry."
-    }
+# ─────────────────────────────────────────────
+require() {
+    command -v "$1" &>/dev/null \
+        || die "'$1' is not installed or not in PATH. Install it and retry."
 }
 
-# ---------------------------------------------
+# ─────────────────────────────────────────────
 #  .gitmodules parser
-#  Returns array of PSCustomObject { Path; Url; Org; RepoName; State }
-# ---------------------------------------------
-function Read-GitModules {
-    $file = ".gitmodules"
-    if (-not (Test-Path $file)) {
-        Invoke-Die ".gitmodules not found in $(Get-Location). Run this script from the project root."
-    }
+#  Outputs lines: "<path> <url>"
+# ─────────────────────────────────────────────
+parse_gitmodules() {
+    local file="${1:-.gitmodules}"
+    [[ -f "$file" ]] || die ".gitmodules not found at $file"
 
-    $submodules = @()
-    $path = $null
-    $url = $null
-
-    foreach ($line in Get-Content $file) {
-        $line = $line.Trim()
-        if ($line -match '^path\s*=\s*(.+)$') { $path = $Matches[1].Trim() }
-        if ($line -match '^url\s*=\s*(.+)$') { $url = $Matches[1].Trim() }
-
-        if ($path -and $url) {
-            $clean = $url -replace '\.git$', ''
-            $clean = $clean -replace '^.*github\.com[:/]', ''
-            $org = $clean.Split('/')[0]
-            $repoName = $clean.Split('/')[1]
-
-            $submodules += [PSCustomObject]@{
-                Path     = $path
-                Url      = $url
-                Org      = $org
-                RepoName = $repoName
-                State    = ""
-            }
-            $path = $null
-            $url = $null
-        }
-    }
-
-    if ($submodules.Count -eq 0) {
-        Invoke-Die "No submodules found in .gitmodules."
-    }
-    return $submodules
+    local path="" url=""
+    # Pipe through tr to strip \r before reading, handles CRLF .gitmodules on Windows
+    while IFS= read -r line; do
+        line="${line#"${line%%[![:space:]]*}"}"   # ltrim
+        if [[ "$line" =~ ^path[[:space:]]*=[[:space:]]*(.*) ]]; then
+            path="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^url[[:space:]]*=[[:space:]]*(.*) ]]; then
+            url="${BASH_REMATCH[1]}"
+        fi
+        if [[ -n "$path" && -n "$url" ]]; then
+            echo "$path $url"
+            path=""; url=""
+        fi
+    # Append a newline so the last line is always read (handles files with no trailing newline)
+    done < <({ tr -d '\r' < "$file"; echo; })
 }
 
-# ---------------------------------------------
-#  Safe git remote URL reader.
-#  Native exe stderr cannot be suppressed with 2>$null in PS5;
-#  merge streams with 2>&1 and filter out error lines instead.
-# ---------------------------------------------
-function Get-RemoteUrl {
-    param([string]$Dir, [string]$Remote)
-    # Locally silence errors so NativeCommandError from git.exe does not surface
-    $local:ErrorActionPreference = "SilentlyContinue"
-    try {
-        $result = & git -C $Dir remote get-url $Remote 2>&1
-    }
-    catch {
-        return ""
-    }
-    if ($LASTEXITCODE -ne 0) { return "" }
-    $url = $result | Where-Object { $_ -is [string] -and $_ -notmatch "^error:" } | Select-Object -First 1
-    if ($null -eq $url) { return "" }
-    return $url.Trim()
+# Extract GitHub owner/repo from a URL (https or ssh)
+parse_github_repo() {
+    local url="$1"
+    # https://github.com/ORG/REPO.git  or  git@github.com:ORG/REPO.git
+    url="${url%.git}"
+    url="${url##*github.com[:/]}"
+    echo "$url"   # returns "ORG/REPO"
 }
 
-# ---------------------------------------------
-#  State detection
-#  Returns: pristine | initialised | has_origin | fully_setup
-# ---------------------------------------------
-function Get-SubmoduleState {
-    param([string]$Dir)
+# ─────────────────────────────────────────────
+#  State detection for a single submodule dir
+# ─────────────────────────────────────────────
+detect_state() {
+    # Returns one of: pristine | initialised | has_origin | has_upstream | fully_setup
+    local dir="$1"
 
-    if (-not (Test-Path "$Dir\.git" -PathType Container)) { return "pristine" }
+    [[ -d "$dir/.git" ]] || { echo "pristine"; return; }
 
-    $hasOrigin = (Get-RemoteUrl -Dir $Dir -Remote "origin") -ne ""
-    $hasUpstream = (Get-RemoteUrl -Dir $Dir -Remote "upstream") -ne ""
+    local has_origin has_upstream
+    has_origin=$(git -C "$dir" remote get-url origin   2>/dev/null && echo yes || echo no)
+    has_upstream=$(git -C "$dir" remote get-url upstream 2>/dev/null && echo yes || echo no)
 
-    if ($hasOrigin -and $hasUpstream) { return "fully_setup" }
-    elseif ($hasOrigin) { return "has_origin" }
-    else { return "initialised" }
+    if   [[ "$has_origin" == "yes" && "$has_upstream" == "yes" ]]; then echo "fully_setup"
+    elif [[ "$has_origin" == "yes" ]];                              then echo "has_origin"
+    else                                                                 echo "initialised"
+    fi
 }
 
-# ---------------------------------------------
+# ─────────────────────────────────────────────
 #  Git helpers
-# ---------------------------------------------
-function Ensure-GitInit {
-    param([string]$Dir)
-    if (-not (Test-Path "$Dir\.git" -PathType Container)) {
-        # Suppress NativeCommandError: merge stderr into stdout before piping,
-        # and silence errors locally so PS5 does not raise on non-zero-looking
-        # informational messages written to stderr by git.exe.
-        $local:ErrorActionPreference = "SilentlyContinue"
-
-        Write-Info "Initialising git repo in '$Dir'..."
-        $initOut = & git -C $Dir init -q 2>&1
-        if ($LASTEXITCODE -ne 0) { Invoke-Die "git init failed in '$Dir':$([Environment]::NewLine)$($initOut -join [Environment]::NewLine)" }
-
-        # `git checkout -b main` prints "Switched to a new branch 'main'" on
-        # stderr (informational, not an error).  Merging streams suppresses the
-        # NativeCommandError that PS5 would otherwise raise.
-        # The `|| true` equivalent: we ignore a non-zero exit here because the
-        # only failure case is "branch already exists", which is harmless.
-        & git -C $Dir checkout -b main 2>&1 | Out-Null
-
-        Write-Ok "Git initialised in '$Dir'"
-    }
+# ─────────────────────────────────────────────
+ensure_git_init() {
+    local dir="$1"
+    if [[ ! -d "$dir/.git" ]]; then
+        info "Initialising git repo in '$dir'..."
+        git -C "$dir" init -q
+        git -C "$dir" checkout -b main &>/dev/null || true
+        success "Git initialised in '$dir'"
+    fi
 }
 
-function Set-GitRemote {
-    param([string]$Dir, [string]$Name, [string]$Url)
-    $current = Get-RemoteUrl -Dir $Dir -Remote $Name
-    if ($current -eq "") {
-        & git -C $Dir remote add $Name $Url 2>&1 | Out-Null
-    }
-    elseif ($current -ne $Url) {
-        & git -C $Dir remote set-url $Name $Url 2>&1 | Out-Null
-    }
+set_remote() {
+    local dir="$1" name="$2" url="$3"
+    local current
+    current=$(git -C "$dir" remote get-url "$name" 2>/dev/null || true)
+    if [[ -z "$current" ]]; then
+        git -C "$dir" remote add "$name" "$url" 2>/dev/null
+    elif [[ "$current" != "$url" ]]; then
+        git -C "$dir" remote set-url "$name" "$url" 2>/dev/null
+    fi
 }
 
-function Invoke-Pull {
-    param([string]$Dir, [string]$Remote, [string]$Branch = "main")
-    # Git writes fetch progress ("From https://...") to stderr even on success.
-    # Scoping ErrorActionPreference prevents PS5 from raising NativeCommandError
-    # on that informational output, while 2>&1 still captures everything so we
-    # can surface a useful message if the pull genuinely fails.
-    $local:ErrorActionPreference = "SilentlyContinue"
-    $output = & git -C $Dir pull $Remote $Branch 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Invoke-Die "Pull failed in '$Dir':`n$($output -join "`n")`nResolve conflicts and retry."
-    }
-    Write-Ok "Pulled '$Branch' in $Dir"
+pull_branch() {
+    local dir="$1" remote="$2" branch="${3:-main}"
+    local output
+    output=$(git -C "$dir" pull "$remote" "$branch" 2>&1) \
+        || die "Pull failed in '$dir':\n$output\nResolve any conflicts and retry."
+    success "Pulled '$branch' in $dir"
 }
 
-function Get-CommitCount {
-    param([string]$Dir)
-    $local:ErrorActionPreference = "SilentlyContinue"
-    try {
-        $result = & git -C $Dir rev-list --count HEAD 2>&1
-    }
-    catch {
-        return 0
-    }
-    if ($LASTEXITCODE -ne 0) { return 0 }
-    $n = $result | Where-Object { $_ -match '^\d+$' } | Select-Object -First 1
-    if ($null -eq $n) { return 0 }
-    return [int]$n
-}
-
-# ---------------------------------------------
+# ─────────────────────────────────────────────
 #  GitHub API helpers
-# ---------------------------------------------
-function Test-ForkExists {
-    param([string]$Username, [string]$RepoName)
-    try {
-        $r = Invoke-WebRequest -Uri "https://github.com/$Username/$RepoName" `
-            -UseBasicParsing -ErrorAction Stop
-        return $r.StatusCode -eq 200
-    }
-    catch {
-        return $false
-    }
+# ─────────────────────────────────────────────
+fork_exists() {
+    local username="$1" repo_name="$2"
+    local code
+    code=$(curl -s -o /dev/null -w "%{http_code}" "https://github.com/$username/$repo_name")
+    [[ "$code" == "200" ]]
 }
 
-function Invoke-AutoFork {
-    param([string]$Org, [string]$RepoName, [string]$Username, [string]$Token)
-    Write-Info "Forking $Org/$RepoName -> $Username/$RepoName ..."
-    $headers = @{
-        "Authorization" = "token $Token"
-        "Accept"        = "application/vnd.github+json"
-    }
-    try {
-        $r = Invoke-WebRequest `
-            -Uri             "https://api.github.com/repos/$Org/$RepoName/forks" `
-            -Method          POST `
-            -Headers         $headers `
-            -UseBasicParsing `
-            -ErrorAction     Stop
-        if ($r.StatusCode -eq 202) { Write-Ok "Fork of '$RepoName' queued on GitHub" }
-    }
-    catch {
-        $code = $_.Exception.Response.StatusCode.value__
-        switch ($code) {
-            401 { Invoke-Die "GitHub token rejected (401). Ensure the token is valid." }
-            403 { Invoke-Die "GitHub API forbidden (403). Token needs 'repo' or 'public_repo' scope." }
-            404 { Invoke-Die "Repository '$Org/$RepoName' not found (404). Check .gitmodules URLs." }
-            422 { Write-Info "Fork of '$RepoName' already exists -- skipping creation." }
-            default { Invoke-Die "GitHub API returned HTTP $code for '$RepoName'." }
-        }
-    }
+auto_fork() {
+    local org="$1" repo_name="$2" username="$3" token="$4"
+    local code
+    code=$(curl -s -o /tmp/_fork_resp.json -w "%{http_code}" \
+        -X POST \
+        -H "Authorization: token $token" \
+        -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/$org/$repo_name/forks")
+
+    case "$code" in
+        202) success "Fork of '$repo_name' queued on GitHub" ;;
+        422) info    "Fork of '$repo_name' already exists — skipping" ;;
+        401) die "GitHub token rejected (401). Ensure the token is valid." ;;
+        403) die "GitHub API forbidden (403). Token needs 'repo' or 'public_repo' scope." ;;
+        404) die "Repository '$org/$repo_name' not found (404). Verify names in .gitmodules." ;;
+        *)   die "GitHub API returned HTTP $code for '$repo_name'. See /tmp/_fork_resp.json." ;;
+    esac
 }
 
-# ---------------------------------------------
+# ─────────────────────────────────────────────
 #  Input helpers
-# ---------------------------------------------
-function Read-NonEmpty {
-    param([string]$Prompt)
-    do {
-        $v = (Read-Host "  $Prompt").Trim()
-        if ([string]::IsNullOrWhiteSpace($v)) { Write-Fail "Input cannot be empty." }
-    } while ([string]::IsNullOrWhiteSpace($v))
-    return $v
+# ─────────────────────────────────────────────
+read_nonempty() {
+    local prompt="$1" value=""
+    while [[ -z "$value" ]]; do
+        read -rp "  $prompt: " value
+        value="${value// /}"
+        [[ -z "$value" ]] && fail "Input cannot be empty."
+    done
+    echo "$value"
 }
 
-function Read-Secret {
-    param([string]$Prompt)
-    do {
-        $secure = Read-Host "  $Prompt" -AsSecureString
-        $v = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
-        $v = $v.Trim()
-        if ([string]::IsNullOrWhiteSpace($v)) { Write-Fail "Token cannot be empty." }
-    } while ([string]::IsNullOrWhiteSpace($v))
-    return $v
+read_secret() {
+    local prompt="$1" value=""
+    while [[ -z "$value" ]]; do
+        read -rsp "  $prompt: " value
+        echo
+        value="${value// /}"
+        [[ -z "$value" ]] && fail "Input cannot be empty."
+    done
+    echo "$value"
 }
 
-function Read-Choice {
-    param([string]$Prompt, [string[]]$Valid)
-    do {
-        $v = (Read-Host "  $Prompt").Trim().ToLower()
-        if ($v -notin $Valid) {
-            Write-Fail "Invalid input '$v'. Enter one of: $($Valid -join ' / ')."
-        }
-    } while ($v -notin $Valid)
-    return $v
+read_choice() {
+    local prompt="$1" value=""
+    shift
+    local valid=("$@")
+    while true; do
+        read -rp "  $prompt: " value
+        value="${value,,}"
+        for v in "${valid[@]}"; do
+            [[ "$value" == "$v" ]] && { echo "$value"; return; }
+        done
+        fail "Invalid input '$value'. Enter one of: ${valid[*]}"
+    done
 }
 
-# ---------------------------------------------
+# ─────────────────────────────────────────────
 #  Main
-# ---------------------------------------------
-function Main {
-    Write-Banner
+# ─────────────────────────────────────────────
+main() {
+    # ── Locate project root ───────────────────
+    # Walk up from the script's own directory until .gitmodules is found,
+    # then cd there — so the script works from any subdirectory.
+    # cd to the directory the script lives in; .gitmodules must be right there.
+    local root
+    root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ ! -f "$root/.gitmodules" ]]; then
+        echo -e "\n  \033[1;31m✖  No .gitmodules found in the script's directory ($root).\033[0m"
+        echo -e "  \033[1;31m     Place setup.sh in the same folder as .gitmodules and try again.\033[0m\n" >&2
+        exit 1
+    fi
+    cd "$root"
 
-    # -- Prerequisites -------------------------
-    Write-Section "Checking Prerequisites"
-    Require-Command "git"
-    Write-Ok "git   $(git --version)"
+    banner
 
-    # -- Parse .gitmodules --------------------
-    Write-Section "Reading .gitmodules"
-    $submodules = Read-GitModules
-    foreach ($s in $submodules) {
-        Write-Ok "Found submodule: $($s.Path)  ->  $($s.Url)"
-    }
+    # ── Prerequisites ──────────────────────────
+    section "Checking Prerequisites"
+    require git
+    require curl
+    success "git   $(git --version)"
+    success "curl  $(curl --version | head -1)"
 
-    # -- Detect existing state ----------------
-    Write-Section "Detecting Existing State"
-    $allFullySetup = $true
+    # ── Parse .gitmodules ─────────────────────
+    section "Reading .gitmodules"
+    declare -A SUB_PATH SUB_URL SUB_ORG SUB_REPONAME
+    local sub_count=0
 
-    foreach ($s in $submodules) {
-        $state = Get-SubmoduleState -Dir $s.Path
-        $s.State = $state
+    while IFS=" " read -r path url; do
+        local org_repo
+        org_repo=$(parse_github_repo "$url")
+        local org="${org_repo%%/*}"
+        local repo_name="${org_repo##*/}"
 
-        switch ($state) {
-            "pristine" { Write-Info "$($s.Path)  ->  not initialised yet" }
-            "initialised" { Write-Info "$($s.Path)  ->  git init done, no remotes" }
-            "has_origin" { Write-Info "$($s.Path)  ->  origin set, no upstream" }
-            "fully_setup" { Write-Skip "$($s.Path)  ->  origin + upstream already configured" }
-        }
-        if ($state -ne "fully_setup") { $allFullySetup = $false }
-    }
+        SUB_PATH[$sub_count]="$path"
+        SUB_URL[$sub_count]="$url"
+        SUB_ORG[$sub_count]="$org"
+        SUB_REPONAME[$sub_count]="$repo_name"
 
-    if ($allFullySetup) {
-        Write-Host ""
-        Write-Ok "Everything is already set up. Nothing to do."
-        Write-Host ""
-        Write-Host "  To pull latest changes:" -ForegroundColor DarkGray
-        foreach ($s in $submodules) {
-            Write-Host "    git -C $($s.Path) pull origin main" -ForegroundColor Yellow
-        }
-        Write-Host ""
+        success "Found submodule: $path  →  $url"
+        (( sub_count++ )) || true
+    done < <(parse_gitmodules "$root/.gitmodules")
+
+    [[ $sub_count -gt 0 ]] || die "No submodules found in .gitmodules."
+
+    # ── Detect existing state ─────────────────
+    section "Detecting Existing State"
+    declare -A SUB_STATE
+    local all_fully_setup=true
+
+    for (( i=0; i<sub_count; i++ )); do
+        local dir="${SUB_PATH[$i]}"
+        local state
+        state=$(detect_state "$dir")
+        SUB_STATE[$i]="$state"
+
+        case "$state" in
+            pristine)     info    "$dir  →  not initialised yet" ;;
+            initialised)  info    "$dir  →  git init done, no remotes" ;;
+            has_origin)   info    "$dir  →  origin set, no upstream" ;;
+            fully_setup)  skipped "$dir  →  origin + upstream already configured" ;;
+        esac
+
+        [[ "$state" == "fully_setup" ]] || all_fully_setup=false
+    done
+
+    if [[ "$all_fully_setup" == true ]]; then
+        echo ""
+        success "Everything is already set up. Nothing to do."
+
+        echo ""
+        echo -e "  ${_c_dim}To pull latest changes run:${_c_reset}"
+        for (( i=0; i<sub_count; i++ )); do
+            echo -e "    ${_c_yellow}git -C ${SUB_PATH[$i]} pull origin main${_c_reset}"
+        done
+        echo ""
         exit 0
-    }
+    fi
 
-    # -- Mode selection -----------------------
-    Write-Section "Setup Mode"
-    Write-Host "  How would you like to set up the repositories?" -ForegroundColor White
-    Write-Host "    fork   -- personal copies under your GitHub account" -ForegroundColor DarkGray
-    Write-Host "    clone  -- direct read from upstream org" -ForegroundColor DarkGray
-    Write-Host ""
-    $method = Read-Choice -Prompt "Enter choice (fork/clone)" -Valid @("fork", "clone")
+    # ── Mode selection ────────────────────────
+    section "Setup Mode"
+    echo -e "  ${_c_white}How would you like to set up the repositories?${_c_reset}"
+    echo -e "  ${_c_dim}  fork   — personal copies under your GitHub account${_c_reset}"
+    echo -e "  ${_c_dim}  clone  — direct read from upstream org${_c_reset}"
+    echo ""
+    local method
+    method=$(read_choice "Enter choice (fork/clone)" "fork" "clone")
 
-    # ==========================================
+    # ══════════════════════════════════════════
     #  FORK path
-    # ==========================================
-    if ($method -eq "fork") {
+    # ══════════════════════════════════════════
+    if [[ "$method" == "fork" ]]; then
 
-        Write-Section "GitHub Account"
-        $username = Read-NonEmpty -Prompt "GitHub username"
+        section "GitHub Account"
+        local username
+        username=$(read_nonempty "GitHub username")
 
-        Write-Section "Verifying / Creating Forks"
-        $token = $null
-        $tokenFetched = $false
-        $anyForked = $false
+        section "Verifying / Creating Forks"
+        local token="" token_fetched=false
 
-        foreach ($s in $submodules) {
-            if ($s.State -eq "fully_setup") {
-                Write-Skip "$($s.RepoName) -- remotes intact"
+        for (( i=0; i<sub_count; i++ )); do
+            local org="${SUB_ORG[$i]}"
+            local repo_name="${SUB_REPONAME[$i]}"
+            local state="${SUB_STATE[$i]}"
+
+            # Already fully set up — skip entirely
+            if [[ "$state" == "fully_setup" ]]; then
+                skipped "$repo_name — remotes intact"
                 continue
-            }
+            fi
 
-            if (Test-ForkExists -Username $username -RepoName $s.RepoName) {
-                Write-Ok "github.com/$username/$($s.RepoName) exists"
-            }
-            else {
-                Write-Info "github.com/$username/$($s.RepoName) not found -- forking..."
-                if (-not $tokenFetched) {
-                    Write-Host ""
-                    $token = Read-Secret -Prompt "GitHub Personal Access Token (needs 'repo' scope)"
-                    $tokenFetched = $true
-                }
-                Invoke-AutoFork -Org $s.Org -RepoName $s.RepoName -Username $username -Token $token
-                $anyForked = $true
-            }
-        }
+            # Check fork
+            if fork_exists "$username" "$repo_name"; then
+                success "github.com/$username/$repo_name exists"
+            else
+                info "github.com/$username/$repo_name not found — forking..."
+                if [[ "$token_fetched" == false ]]; then
+                    echo ""
+                    token=$(read_secret "GitHub Personal Access Token (needs 'repo' scope)")
+                    token_fetched=true
+                fi
+                auto_fork "$org" "$repo_name" "$username" "$token"
+            fi
+        done
 
-        if ($anyForked) {
-            Write-Info "Waiting 10s for GitHub to provision fork(s)..."
-            Start-Sleep -Seconds 10
-        }
+        if [[ "$token_fetched" == true ]]; then
+            info "Waiting 10s for GitHub to provision fork(s)..."
+            sleep 10
+        fi
 
-        Write-Section "Configuring Remotes and Pulling"
+        section "Configuring Remotes & Pulling"
 
-        foreach ($s in $submodules) {
-            if ($s.State -eq "fully_setup") { Write-Skip $s.Path; continue }
+        for (( i=0; i<sub_count; i++ )); do
+            local dir="${SUB_PATH[$i]}"
+            local org="${SUB_ORG[$i]}"
+            local repo_name="${SUB_REPONAME[$i]}"
+            local state="${SUB_STATE[$i]}"
+            local upstream_url="https://github.com/$org/$repo_name.git"
+            local fork_url="https://github.com/$username/$repo_name.git"
 
-            $upstreamUrl = "https://github.com/$($s.Org)/$($s.RepoName).git"
-            $forkUrl = "https://github.com/$username/$($s.RepoName).git"
+            [[ "$state" == "fully_setup" ]] && { skipped "$dir"; continue; }
 
-            if (-not (Test-Path $s.Path -PathType Container)) {
-                New-Item -ItemType Directory -Path $s.Path | Out-Null
-            }
-            Ensure-GitInit -Dir $s.Path
+            # Ensure git repo exists
+            [[ -d "$dir" ]] || mkdir -p "$dir"
+            ensure_git_init "$dir"
 
-            # origin
-            $curOrigin = Get-RemoteUrl -Dir $s.Path -Remote "origin"
-            if ($curOrigin -eq "") {
-                Set-GitRemote -Dir $s.Path -Name "origin" -Url $forkUrl
-                Write-Ok "$($s.Path)  [origin]   $forkUrl"
-            }
-            elseif ($curOrigin -eq $forkUrl) {
-                Write-Skip "$($s.Path)  [origin]   already correct"
-            }
-            else {
-                Set-GitRemote -Dir $s.Path -Name "origin" -Url $forkUrl
-                Write-Ok "$($s.Path)  [origin]   updated -> $forkUrl"
-            }
+            # Set origin if missing / wrong
+            local cur_origin
+            cur_origin=$(git -C "$dir" remote get-url origin 2>/dev/null || true)
+            if [[ -z "$cur_origin" ]]; then
+                set_remote "$dir" "origin" "$fork_url"
+                success "$dir  [origin]   $fork_url"
+            elif [[ "$cur_origin" == "$fork_url" ]]; then
+                skipped "$dir  [origin]   already correct"
+            else
+                set_remote "$dir" "origin" "$fork_url"
+                success "$dir  [origin]   updated → $fork_url"
+            fi
 
-            # upstream
-            $curUpstream = Get-RemoteUrl -Dir $s.Path -Remote "upstream"
-            if ($curUpstream -eq "") {
-                Set-GitRemote -Dir $s.Path -Name "upstream" -Url $upstreamUrl
-                Write-Ok "$($s.Path)  [upstream] $upstreamUrl"
-            }
-            elseif ($curUpstream -eq $upstreamUrl) {
-                Write-Skip "$($s.Path)  [upstream] already correct"
-            }
-            else {
-                Set-GitRemote -Dir $s.Path -Name "upstream" -Url $upstreamUrl
-                Write-Ok "$($s.Path)  [upstream] updated -> $upstreamUrl"
-            }
+            # Set upstream if missing
+            local cur_up
+            cur_up=$(git -C "$dir" remote get-url upstream 2>/dev/null || true)
+            if [[ -z "$cur_up" ]]; then
+                set_remote "$dir" "upstream" "$upstream_url"
+                success "$dir  [upstream] $upstream_url"
+            elif [[ "$cur_up" == "$upstream_url" ]]; then
+                skipped "$dir  [upstream] already correct"
+            else
+                set_remote "$dir" "upstream" "$upstream_url"
+                success "$dir  [upstream] updated → $upstream_url"
+            fi
 
-            # Pull only if no commits yet
-            if ((Get-CommitCount -Dir $s.Path) -eq 0) {
-                Invoke-Pull -Dir $s.Path -Remote "origin"
-            }
-            else {
-                Write-Skip "$($s.Path) -- already has commits, not pulling"
-            }
-        }
+            # Pull only if not already on a branch with commits
+            local commit_count
+            commit_count=$(git -C "$dir" rev-list --count HEAD 2>/dev/null || echo 0)
+            if [[ "$commit_count" -eq 0 ]]; then
+                pull_branch "$dir" "origin"
+            else
+                skipped "$dir — already has commits, not pulling"
+            fi
+        done
 
-        Write-CompletionBox "Fork Setup Complete!                        "
-        Write-Host "  Remotes per submodule:" -ForegroundColor DarkGray
-        Write-SummaryRow "origin  " "-> github.com/$username/{repo}  (your fork)"
-        Write-SummaryRow "upstream" "-> upstream org  (sync with: git pull upstream main)"
-        Write-Host ""
+        # ── Summary ────────────────────────────
+        echo ""
+        echo -e "  ${_c_green}╔══════════════════════════════════════════════╗${_c_reset}"
+        echo -e "  ${_c_green}║            Fork Setup Complete!              ║${_c_reset}"
+        echo -e "  ${_c_green}╚══════════════════════════════════════════════╝${_c_reset}"
+        echo ""
+        echo -e "  ${_c_dim}Remotes per submodule:${_c_reset}"
+        summary_row "origin  " "→ github.com/$username/{repo}  (your fork)"
+        summary_row "upstream" "→ upstream org  (sync with: git pull upstream main)"
+        echo ""
 
-        # ==========================================
-        #  CLONE path
-        # ==========================================
-    }
-    elseif ($method -eq "clone") {
+    # ══════════════════════════════════════════
+    #  CLONE path
+    # ══════════════════════════════════════════
+    elif [[ "$method" == "clone" ]]; then
 
-        Write-Section "Configuring Remotes and Pulling"
+        section "Configuring Remotes & Pulling"
 
-        foreach ($s in $submodules) {
-            $upstreamUrl = "https://github.com/$($s.Org)/$($s.RepoName).git"
+        for (( i=0; i<sub_count; i++ )); do
+            local dir="${SUB_PATH[$i]}"
+            local org="${SUB_ORG[$i]}"
+            local repo_name="${SUB_REPONAME[$i]}"
+            local state="${SUB_STATE[$i]}"
+            local upstream_url="https://github.com/$org/$repo_name.git"
 
-            if ($s.State -eq "has_origin" -or $s.State -eq "fully_setup") {
-                $cur = Get-RemoteUrl -Dir $s.Path -Remote "origin"
-                if ($cur -eq $upstreamUrl) {
-                    Write-Skip "$($s.Path) -- origin already correct"
+            [[ "$state" == "fully_setup" || "$state" == "has_origin" ]] && {
+                # Verify the existing origin matches
+                local cur_origin
+                cur_origin=$(git -C "$dir" remote get-url origin 2>/dev/null || true)
+                if [[ "$cur_origin" == "$upstream_url" ]]; then
+                    skipped "$dir — origin already correct"
                     continue
-                }
+                fi
             }
 
-            if (-not (Test-Path $s.Path -PathType Container)) {
-                New-Item -ItemType Directory -Path $s.Path | Out-Null
-            }
-            Ensure-GitInit -Dir $s.Path
+            [[ -d "$dir" ]] || mkdir -p "$dir"
+            ensure_git_init "$dir"
 
-            $curOrigin = Get-RemoteUrl -Dir $s.Path -Remote "origin"
-            if ($curOrigin -eq "") {
-                Set-GitRemote -Dir $s.Path -Name "origin" -Url $upstreamUrl
-                Write-Ok "$($s.Path)  [origin] $upstreamUrl"
-            }
-            elseif ($curOrigin -eq $upstreamUrl) {
-                Write-Skip "$($s.Path)  [origin] already correct"
-            }
-            else {
-                Set-GitRemote -Dir $s.Path -Name "origin" -Url $upstreamUrl
-                Write-Ok "$($s.Path)  [origin] updated -> $upstreamUrl"
-            }
+            local cur_origin
+            cur_origin=$(git -C "$dir" remote get-url origin 2>/dev/null || true)
+            if [[ -z "$cur_origin" ]]; then
+                set_remote "$dir" "origin" "$upstream_url"
+                success "$dir  [origin] $upstream_url"
+            elif [[ "$cur_origin" == "$upstream_url" ]]; then
+                skipped "$dir  [origin] already correct"
+            else
+                set_remote "$dir" "origin" "$upstream_url"
+                success "$dir  [origin] updated → $upstream_url"
+            fi
 
-            if ((Get-CommitCount -Dir $s.Path) -eq 0) {
-                Invoke-Pull -Dir $s.Path -Remote "origin"
-            }
-            else {
-                Write-Skip "$($s.Path) -- already has commits, not pulling"
-            }
-        }
+            local commit_count
+            commit_count=$(git -C "$dir" rev-list --count HEAD 2>/dev/null || echo 0)
+            if [[ "$commit_count" -eq 0 ]]; then
+                pull_branch "$dir" "origin"
+            else
+                skipped "$dir — already has commits, not pulling"
+            fi
+        done
 
-        Write-CompletionBox "Clone Setup Complete!                       "
-        Write-Host "  Remotes per submodule:" -ForegroundColor DarkGray
-        Write-SummaryRow "origin" "-> upstream org (source)"
-        Write-Host ""
-    }
+        echo ""
+        echo -e "  ${_c_green}╔══════════════════════════════════════════════╗${_c_reset}"
+        echo -e "  ${_c_green}║           Clone Setup Complete!              ║${_c_reset}"
+        echo -e "  ${_c_green}╚══════════════════════════════════════════════╝${_c_reset}"
+        echo ""
+        echo -e "  ${_c_dim}Remotes per submodule:${_c_reset}"
+        summary_row "origin" "→ upstream org (source)"
+        echo ""
+    fi
 }
 
-Main
+main "$@"

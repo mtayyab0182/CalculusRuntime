@@ -203,6 +203,11 @@ function Set-GitRemote {
 
 function Invoke-Pull {
     param([string]$Dir, [string]$Remote, [string]$Branch = "main")
+    # Git writes fetch progress ("From https://...") to stderr even on success.
+    # Scoping ErrorActionPreference prevents PS5 from raising NativeCommandError
+    # on that informational output, while 2>&1 still captures everything so we
+    # can surface a useful message if the pull genuinely fails.
+    $local:ErrorActionPreference = "SilentlyContinue"
     $output = & git -C $Dir pull $Remote $Branch 2>&1
     if ($LASTEXITCODE -ne 0) {
         Invoke-Die "Pull failed in '$Dir':`n$($output -join "`n")`nResolve conflicts and retry."
@@ -307,6 +312,18 @@ function Read-Choice {
 #  Main
 # ---------------------------------------------
 function Main {
+    # -- Locate project root -------------------
+    # Walk up from the script's own directory until .gitmodules is found,
+    # then Set-Location there -- so the script works from any subdirectory.
+    # Use the script's own directory; .gitmodules must be right there.
+    $root = Split-Path -Parent $MyInvocation.ScriptName
+    if (-not (Test-Path (Join-Path $root ".gitmodules"))) {
+        Write-Fail "No .gitmodules found in the script's directory ($root)."
+        Write-Host "  Place setup.ps1 in the same folder as .gitmodules and try again." -ForegroundColor Red
+        exit 1
+    }
+    Set-Location $root
+
     Write-Banner
 
     # -- Prerequisites -------------------------
