@@ -82,8 +82,15 @@ auto_fork() {
 validate_dirs() {
     [[ -d "backend"  ]] || die "Expected 'backend/' directory not found in $(pwd)."
     [[ -d "frontend" ]] || die "Expected 'frontend/' directory not found in $(pwd)."
-    [[ -d "backend/.git"  ]] || die "'backend/' is not a git repository."
-    [[ -d "frontend/.git" ]] || die "'frontend/' is not a git repository."
+
+    for dir in backend frontend; do
+        if [[ ! -d "$dir/.git" ]]; then
+            warn "'$dir/' is not a git repository. Initialising..."
+            git -C "$dir" init
+            git -C "$dir" checkout -b main 2>/dev/null || true
+            success "Initialised git repo in '$dir/'."
+        fi
+    done
 }
 
 # ─────────────────────────────────────────────
