@@ -81,7 +81,7 @@ yarn start
 ## Project Structure
 
 ```
-CalcVoyager/
+frontend/
 ├── public/
 │   ├── index.html
 │   └── favicon.ico
@@ -96,6 +96,14 @@ CalcVoyager/
 │   │   └── App.css
 │   ├── App.js
 │   └── index.js
+├── package.json
+└── README.md
+backend/
+└── LICENSE
+calculussolver/
+├── api/
+├── data/
+│   └── dataset.json
 ├── package.json
 └── README.md
 ```
