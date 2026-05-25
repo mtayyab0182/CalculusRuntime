@@ -25,12 +25,14 @@ CalcVoyager is a feature-rich calculator designed to make mathematical computati
 ### Setup
 
 1. Clone the repository:
+
 ```bash
-git clone https://github.com/SENODROOM/CalcVoyager.git
+git clone https://github.com/QuantumLogicsLabs/CalculusRuntime.git
 cd CalcVoyager
 ```
 
 2. Install dependencies:
+
 ```bash
 npm install
 # or
@@ -38,6 +40,7 @@ yarn install
 ```
 
 3. Start the development server:
+
 ```bash
 npm start
 # or
@@ -175,7 +178,7 @@ vercel --prod
 
 ## Known Issues
 
-Please check the [Issues](https://github.com/SENODROOM/CalcVoyager/issues) page for known bugs and feature requests.
+Please check the [Issues](https://github.com/QuantumLogicsLabs/CalculusRuntime/issues) page for known bugs and feature requests.
 
 ## License
 
@@ -190,12 +193,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Contact
 
 - **Author**: SENODROOM
-- **Repository**: [github.com/SENODROOM/CalcVoyager](https://github.com/SENODROOM/CalcVoyager)
-- **Issues**: [Report a bug or request a feature](https://github.com/SENODROOM/CalcVoyager/issues)
+- **Repository**: [github.com/QuantumLogicsLabs/CalculusRuntime](https://github.com/QuantumLogicsLabs/CalculusRuntime)
+- **Issues**: [Report a bug or request a feature](https://github.com/QuantumLogicsLabs/CalculusRuntime/issues)
 
 ## Screenshots
 
-*(Add screenshots of your application here)*
+_(Add screenshots of your application here)_
 
 ---
 
