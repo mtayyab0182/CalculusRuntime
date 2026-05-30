@@ -3,3 +3,6 @@
 .txtconfig
 .txtignore
 CalculusRuntime.txt
+venv
+/.venv
+venv/
