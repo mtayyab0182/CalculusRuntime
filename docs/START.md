@@ -31,11 +31,11 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --host 127.0.0.1 --port 8002
 ```
 
-The API will be available at `http://localhost:8000`.  
-Interactive docs: `http://localhost:8000/docs`
+The API will be available at `http://127.0.0.1:8002`.  
+Interactive docs: `http://127.0.0.1:8002/docs`
 
 ### Environment variables (optional)
 
@@ -45,7 +45,7 @@ Create `backend/.env` to override defaults:
 SECRET_KEY=replace-with-a-long-random-string
 TOKEN_EXPIRE_MINUTES=10080
 DB_PATH=calcvoyager.db
-ALLOWED_ORIGINS=http://localhost:3000
+ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 ```
 
 The SQLite database file (`calcvoyager.db`) is created automatically on first run — no setup needed.
@@ -62,11 +62,11 @@ npm start
 
 Opens at `http://localhost:3000`.
 
-The frontend talks to the backend at `http://localhost:8000` by default.  
+The frontend talks to the backend at `http://127.0.0.1:8002` by default.  
 To change the API URL, set it in `frontend/.env`:
 
 ```env
-REACT_APP_API_URL=http://localhost:8000
+REACT_APP_API_URL=http://127.0.0.1:8002
 ```
 
 ---
@@ -108,7 +108,7 @@ Opens at `http://localhost:8501`.
 
 ```
 Terminal 1 — Backend
-  cd backend && .venv\Scripts\activate && uvicorn main:app --reload --port 8000
+  cd backend && .venv\Scripts\activate && uvicorn main:app --reload --host 127.0.0.1 --port 8002
 
 Terminal 2 — Frontend
   cd frontend && npm start
@@ -124,8 +124,8 @@ Terminal 3 — Solver (optional)
 | Service                            | URL                                           |
 | ---------------------------------- | --------------------------------------------- |
 | Frontend                           | http://localhost:3000                         |
-| Backend API                        | http://localhost:8000                         |
-| Backend docs (Swagger)             | http://localhost:8000/docs                    |
+| Backend API                        | http://127.0.0.1:8002                         |
+| Backend docs (Swagger)             | http://127.0.0.1:8002/docs                    |
 | Solver API (local, optional)       | http://localhost:8001                         |
 | Solver Streamlit (local, optional) | http://localhost:8501                         |
 | Solver Streamlit (hosted)          | https://dapeaqzot5jtellyuyxjrf.streamlit.app/ |
@@ -150,7 +150,7 @@ Terminal 3 — Solver (optional)
 Make sure the virtual environment is activated before running uvicorn.
 
 **CORS errors in browser**  
-Confirm the backend is running on port 8000 and `ALLOWED_ORIGINS` includes `http://localhost:3000`.
+Confirm the backend is running on port 8002 and `ALLOWED_ORIGINS` includes `http://localhost:3000`.
 
 **`npm install` fails**  
 Delete `frontend/node_modules` and `frontend/package-lock.json`, then run `npm install` again.
