@@ -10,30 +10,25 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
-
-env:
-  # Opt into the Node.js 24 action runtime now so GitHub does not warn about
-  # Node.js 20 deprecation for JavaScript actions.
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
-  # Keep only one submodule update workflow active per repository so the stable
-  # PR branch is not updated by competing runs.
+  # Prevent overlapping runs from clobbering each other on the same branch.
   group: update-submodules
   cancel-in-progress: false
 
 jobs:
   update-submodules:
-    name: Update and merge submodules
+    name: Update submodule pointers
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
-          # Fetch the base branch and initialize submodules before moving them
-          # to their latest remote-tracking commits.
+          # A PAT is required to push directly to main when branch protection
+          # is enabled. If your main branch has no protection rules, you can
+          # replace this with ${{ github.token }}.
+          token: ${{ github.token }}
           fetch-depth: 0
           submodules: recursive
 
@@ -44,24 +39,19 @@ jobs:
 
       - name: Ignore submodule worktree dirt
         run: |
-          # The parent repository can only commit submodule gitlink pointers.
-          # Some submodules may appear dirty in CI because of generated,
-          # normalized, or platform-specific files. Ignore those worktree-only
-          # changes while still detecting real submodule commit pointer updates.
+          # Only track gitlink pointer changes, not file-level changes inside
+          # each submodule's working tree (generated files, platform diffs, etc.)
           git config diff.ignoreSubmodules dirty
 
           while read -r key path; do
             name="${key#submodule.}"
             name="${name%.path}"
             git config "submodule.${name}.ignore" dirty
-            echo "Configured submodule '$name' at '$path' to ignore dirty worktree files"
+            echo "Configured submodule '$name' at '$path' to ignore dirty worktree"
           done < <(git config --file .gitmodules --get-regexp '^submodule\..*\.path$')
 
       - name: Reset submodule working trees
         run: |
-          # Submodules are disposable checkouts in CI. Reset them before updating
-          # so local file changes inside a submodule cannot block the parent
-          # repository from committing updated gitlink references.
           git submodule sync --recursive
           git submodule foreach --recursive 'git reset --hard && git clean -ffd'
 
@@ -69,74 +59,19 @@ jobs:
         run: |
           git submodule update --init --recursive --remote
 
-          # Clean again after checkout because some submodules may generate or
-          # normalize files during checkout. The parent repo can only commit the
-          # submodule commit pointer, not modified files inside a submodule.
+          # Strip any files modified inside submodules during checkout — the
+          # parent repo only stores the gitlink pointer, nothing else.
           git submodule foreach --recursive 'git reset --hard && git clean -ffd'
 
-      - name: Detect submodule reference changes
-        id: changes
+      - name: Commit and push if pointers changed
         run: |
-          if git diff --ignore-submodules=dirty --quiet --exit-code; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+          # Stage only the three submodule gitlink entries.
+          git add frontend backend calculussolver
+
+          if git diff --cached --quiet; then
+            echo "No submodule pointer changes detected — nothing to commit."
+            exit 0
           fi
 
-      - name: Create or update pull request
-        if: steps.changes.outputs.changed == 'true'
-        id: cpr
-        uses: peter-evans/create-pull-request@v8
-        with:
-          token: ${{ github.token }}
-          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
-          author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
-          commit-message: Update git submodules
-          title: Update git submodules
-          body: |
-            This automated PR updates Git submodule references to the latest commits available from their configured remote branches.
-
-            The workflow uses a stable branch name to avoid duplicate PRs.
-
-            Required repository setting:
-            - Settings → Actions → General → Workflow permissions → enable "Allow GitHub Actions to create and approve pull requests".
-
-            If branch protection blocks the merge step, allow GitHub Actions to create and merge pull requests, and ensure required status checks can pass for this PR before merge.
-          add-paths: |
-            frontend
-            backend
-            calculussolver
-          branch: bot/update-submodules
-          base: main
-          delete-branch: true
-
-      - name: Merge workflow-created pull request
-        if: steps.changes.outputs.changed == 'true' && steps.cpr.outputs.pull-request-number != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
-          PR_BRANCH: ${{ steps.cpr.outputs.pull-request-branch }}
-        run: |
-          # Only merge the PR returned by create-pull-request, and only when its
-          # metadata matches the PR this workflow is expected to own.
-          actual_branch="$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)"
-          actual_base="$(gh pr view "$PR_NUMBER" --json baseRefName --jq .baseRefName)"
-          actual_author="$(gh pr view "$PR_NUMBER" --json author --jq .author.login)"
-          actual_title="$(gh pr view "$PR_NUMBER" --json title --jq .title)"
-
-          if [ "$actual_branch" != "$PR_BRANCH" ] || [ "$actual_branch" != "bot/update-submodules" ]; then
-            echo "Refusing to merge PR #$PR_NUMBER from unexpected branch: $actual_branch"
-            exit 1
-          fi
-
-          if [ "$actual_base" != "main" ] || [ "$actual_author" != "github-actions[bot]" ] || [ "$actual_title" != "Update git submodules" ]; then
-            echo "Refusing to merge PR #$PR_NUMBER because it does not match this workflow's expected PR metadata"
-            exit 1
-          fi
-
-          # Uses a regular merge commit and deletes the update branch after merge.
-          # Repository settings required when branch protection is enabled:
-          # - Allow GitHub Actions to create and approve/merge pull requests.
-          # - Permit the GITHUB_TOKEN to satisfy merge requirements, or configure
-          #   required checks so this PR can become mergeable before this step runs.
-          gh pr merge "$PR_NUMBER" --merge --delete-branch
+          git commit -m "chore: update git submodule pointers [skip ci]"
+          git push origin main
