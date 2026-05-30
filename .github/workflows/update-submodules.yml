@@ -37,8 +37,22 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+      - name: Reset submodule working trees
+        run: |
+          # Submodules are disposable checkouts in CI. Reset them before updating
+          # so local file changes inside a submodule cannot block the parent
+          # repository from committing updated gitlink references.
+          git submodule sync --recursive
+          git submodule foreach --recursive 'git reset --hard && git clean -ffd'
+
       - name: Update submodules to latest remote commits
-        run: git submodule update --init --recursive --remote
+        run: |
+          git submodule update --init --recursive --remote
+
+          # Clean again after checkout because some submodules may generate or
+          # normalize files during checkout. The parent repo can only commit the
+          # submodule commit pointer, not modified files inside a submodule.
+          git submodule foreach --recursive 'git reset --hard && git clean -ffd'
 
       - name: Detect submodule reference changes
         id: changes
