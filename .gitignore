@@ -3,6 +3,8 @@
 .txtconfig
 .txtignore
 CalculusRuntime.txt
+frontend.txt
+backend.txt
 venv
 /.venv
 venv/
