@@ -37,6 +37,21 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+      - name: Ignore submodule worktree dirt
+        run: |
+          # The parent repository can only commit submodule gitlink pointers.
+          # Some submodules may appear dirty in CI because of generated,
+          # normalized, or platform-specific files. Ignore those worktree-only
+          # changes while still detecting real submodule commit pointer updates.
+          git config diff.ignoreSubmodules dirty
+
+          while read -r key path; do
+            name="${key#submodule.}"
+            name="${name%.path}"
+            git config "submodule.${name}.ignore" dirty
+            echo "Configured submodule '$name' at '$path' to ignore dirty worktree files"
+          done < <(git config --file .gitmodules --get-regexp '^submodule\..*\.path$')
+
       - name: Reset submodule working trees
         run: |
           # Submodules are disposable checkouts in CI. Reset them before updating
@@ -57,7 +72,7 @@ jobs:
       - name: Detect submodule reference changes
         id: changes
         run: |
-          if git diff --quiet --exit-code; then
+          if git diff --ignore-submodules=dirty --quiet --exit-code; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -77,6 +92,10 @@ jobs:
             This automated PR updates Git submodule references to the latest commits available from their configured remote branches.
 
             The workflow uses a stable branch name to avoid duplicate PRs. If branch protection blocks the merge step, allow GitHub Actions to create and merge pull requests, and ensure required status checks can pass for this PR before merge.
+          add-paths: |
+            frontend
+            backend
+            calculussolver
           branch: bot/update-submodules
           base: main
           delete-branch: true
