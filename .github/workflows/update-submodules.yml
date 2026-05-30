@@ -1,0 +1,99 @@
+name: Update submodules
+
+on:
+  # Run every 30 minutes.
+  schedule:
+    - cron: '*/30 * * * *'
+
+  # Allow maintainers to run the update immediately when needed.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # Keep only one submodule update workflow active per repository so the stable
+  # PR branch is not updated by competing runs.
+  group: update-submodules
+  cancel-in-progress: false
+
+jobs:
+  update-submodules:
+    name: Update and merge submodules
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch the base branch and initialize submodules before moving them
+          # to their latest remote-tracking commits.
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Configure git bot identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Update submodules to latest remote commits
+        run: git submodule update --init --recursive --remote
+
+      - name: Detect submodule reference changes
+        id: changes
+        run: |
+          if git diff --quiet --exit-code; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update pull request
+        if: steps.changes.outputs.changed == 'true'
+        id: cpr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ github.token }}
+          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          commit-message: Update git submodules
+          title: Update git submodules
+          body: |
+            This automated PR updates Git submodule references to the latest commits available from their configured remote branches.
+
+            The workflow uses a stable branch name to avoid duplicate PRs. If branch protection blocks the merge step, allow GitHub Actions to create and merge pull requests, and ensure required status checks can pass for this PR before merge.
+          branch: bot/update-submodules
+          base: main
+          delete-branch: true
+
+      - name: Merge workflow-created pull request
+        if: steps.changes.outputs.changed == 'true' && steps.cpr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
+          PR_BRANCH: ${{ steps.cpr.outputs.pull-request-branch }}
+        run: |
+          # Only merge the PR returned by create-pull-request, and only when its
+          # metadata matches the PR this workflow is expected to own.
+          actual_branch="$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)"
+          actual_base="$(gh pr view "$PR_NUMBER" --json baseRefName --jq .baseRefName)"
+          actual_author="$(gh pr view "$PR_NUMBER" --json author --jq .author.login)"
+          actual_title="$(gh pr view "$PR_NUMBER" --json title --jq .title)"
+
+          if [ "$actual_branch" != "$PR_BRANCH" ] || [ "$actual_branch" != "bot/update-submodules" ]; then
+            echo "Refusing to merge PR #$PR_NUMBER from unexpected branch: $actual_branch"
+            exit 1
+          fi
+
+          if [ "$actual_base" != "main" ] || [ "$actual_author" != "github-actions[bot]" ] || [ "$actual_title" != "Update git submodules" ]; then
+            echo "Refusing to merge PR #$PR_NUMBER because it does not match this workflow's expected PR metadata"
+            exit 1
+          fi
+
+          # Uses a regular merge commit and deletes the update branch after merge.
+          # Repository settings required when branch protection is enabled:
+          # - Allow GitHub Actions to create and approve/merge pull requests.
+          # - Permit the GITHUB_TOKEN to satisfy merge requirements, or configure
+          #   required checks so this PR can become mergeable before this step runs.
+          gh pr merge "$PR_NUMBER" --merge --delete-branch
