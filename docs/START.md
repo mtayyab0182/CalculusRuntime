@@ -13,9 +13,12 @@ Three services run in parallel. Open three terminal windows and start each one.
 | Python  | 3.10+       | `python --version` |
 | pip     | 23+         | `pip --version`    |
 
+> The backend and solver API use **Starlette** (not FastAPI/pydantic), so they work on Python 3.14+.
+> Core deps: `starlette`, `uvicorn`, `PyJWT`, `bcrypt`, `python-multipart` — all pure-Python friendly.
+
 ---
 
-## 1 — Backend (FastAPI + SQLite)
+## 1 — Backend (Starlette + SQLite)
 
 ```bash
 cd backend
