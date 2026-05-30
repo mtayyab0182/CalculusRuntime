@@ -12,6 +12,11 @@ permissions:
   contents: write
   pull-requests: write
 
+env:
+  # Opt into the Node.js 24 action runtime now so GitHub does not warn about
+  # Node.js 20 deprecation for JavaScript actions.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 concurrency:
   # Keep only one submodule update workflow active per repository so the stable
   # PR branch is not updated by competing runs.
@@ -25,7 +30,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # Fetch the base branch and initialize submodules before moving them
           # to their latest remote-tracking commits.
@@ -81,7 +86,7 @@ jobs:
       - name: Create or update pull request
         if: steps.changes.outputs.changed == 'true'
         id: cpr
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ github.token }}
           committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
@@ -91,7 +96,12 @@ jobs:
           body: |
             This automated PR updates Git submodule references to the latest commits available from their configured remote branches.
 
-            The workflow uses a stable branch name to avoid duplicate PRs. If branch protection blocks the merge step, allow GitHub Actions to create and merge pull requests, and ensure required status checks can pass for this PR before merge.
+            The workflow uses a stable branch name to avoid duplicate PRs.
+
+            Required repository setting:
+            - Settings → Actions → General → Workflow permissions → enable "Allow GitHub Actions to create and approve pull requests".
+
+            If branch protection blocks the merge step, allow GitHub Actions to create and merge pull requests, and ensure required status checks can pass for this PR before merge.
           add-paths: |
             frontend
             backend
