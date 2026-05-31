@@ -1,9 +1,9 @@
 name: Update submodules
 
 on:
-  # Run every 30 minutes.
+  # Run every 5 minutes.
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/05 * * * *'
 
   # Allow maintainers to run the update immediately when needed.
   workflow_dispatch:
