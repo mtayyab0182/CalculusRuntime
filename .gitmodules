@@ -7,3 +7,6 @@
 [submodule "calculus-solver"]
 	path = calculussolver
 	url = https://github.com/QuantumLogicsLabs/CalculusSolver.git
+[submodule "ai-chatbot"]
+	path = ai-chatbot
+	url = https://github.com/QuantumLogicsLabs/Dls-AI-Chatbot.git
